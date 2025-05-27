@@ -2,7 +2,6 @@ const bcrypt = require("bcrypt");
 const { db } = require("../firebaseClient");
 const jwt = require("jsonwebtoken");
 const { summarizeText } = require('../services/groqService');
-const { convertSymptoms } = require("../utils/symptomMapping");
 
 class IbuService {
     async createIbu(ibu) {
@@ -51,59 +50,75 @@ class IbuService {
     }
 
     async getAllIbuWithCatatanByNamaBidan(nama_bidan) {
-    try {
-        const ibuSnapshot = await db
-            .collection("Ibu")
-            .where("bidan", "==", nama_bidan)
-            .select("nama_ibu", "email_ibu", "usia_kehamilan", "tanggal_registrasi", "verifikasi_email")
-            .get();
+        try {
+            const ibuSnapshot = await db
+                .collection("Ibu")
+                .where("bidan", "==", nama_bidan)
+                .select("nama_ibu", "email_ibu", "usia_kehamilan", "tanggal_registrasi", "verifikasi_email")
+                .get();
 
-        if (ibuSnapshot.empty) {
-            return [];
+            if (ibuSnapshot.empty) {
+                return [];
+            }
+
+            const ibuDataWithCatatan = await Promise.all(
+                ibuSnapshot.docs.map(async (ibuDoc) => {
+                    const ibuData = ibuDoc.data();
+                    const id_ibu = ibuDoc.id;
+
+                    const tanggalRegistrasi = ibuData.tanggal_registrasi.toDate();
+                    const usiaAwal = ibuData.usia_kehamilan || 0;
+                    const sekarang = new Date();
+                    const selisihHari = Math.floor((sekarang - tanggalRegistrasi) / (1000 * 60 * 60 * 24));
+                    const mingguTambahan = Math.floor(selisihHari / 7);
+                    const usiaKehamilanSekarang = usiaAwal + mingguTambahan;
+
+                    const catatanSnapshot = await db
+                        .collection("Catatan")
+                        .where("id_ibu", "==", id_ibu)
+                        .get();
+
+                    catatanSnapshot.docs.forEach(doc => {
+                        console.log("Isi catatan:", doc.data());
+                    });
+
+                    const catatanList = await Promise.all(
+                        catatanSnapshot.docs.map(async (doc) => {
+                            const data = doc.data();
+                            const isi = data.catatan_kondisi || "";
+
+                            let ringkasan = "";
+                            if (isi.trim().length > 0) {
+                                try {
+                                    ringkasan = await summarizeText(isi);
+                                } catch (err) {
+                                    console.warn(`Gagal merangkum catatan ${doc.id}:`, err.message);
+                                }
+                            }
+
+                            return {
+                                id: doc.id,
+                                ...data,
+                                ringkasan_catatan: ringkasan
+                            };
+                        })
+                    );
+
+                    return {
+                        id: id_ibu,
+                        ...ibuData,
+                        usia_kehamilan: usiaKehamilanSekarang,
+                        catatan: catatanList
+                    };
+                })
+            );
+
+            return ibuDataWithCatatan;
+        } catch (error) {
+            console.error("Gagal mengambil data ibu & catatan:", error);
+            throw new Error("Terjadi kesalahan saat mengambil data");
         }
-
-        const ibuDataWithCatatan = await Promise.all(
-            ibuSnapshot.docs.map(async (ibuDoc) => {
-                const ibuData = ibuDoc.data();
-                const id_ibu = ibuDoc.id;
-
-                const tanggalRegistrasi = ibuData.tanggal_registrasi.toDate();
-                const usiaAwal = ibuData.usia_kehamilan || 0;
-                const sekarang = new Date();
-                const selisihHari = Math.floor((sekarang - tanggalRegistrasi) / (1000 * 60 * 60 * 24));
-                const mingguTambahan = Math.floor(selisihHari / 7);
-                const usiaKehamilanSekarang = usiaAwal + mingguTambahan;
-
-                const catatanSnapshot = await db
-                    .collection("Catatan")
-                    .where("id_ibu", "==", id_ibu)
-                    .get();
-
-                // Ambil semua data catatan
-                const catatanList = catatanSnapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-
-                
-
-                return {
-                    id: id_ibu,
-                    ...ibuData,
-                    usia_kehamilan: usiaKehamilanSekarang,
-                    ringkasan_catatan: "",
-                    ringkasan_catatan: "",
-                    semua_catatan: catatanList,
-                };
-            })
-        );
-
-        return ibuDataWithCatatan;
-    } catch (error) {
-        console.error("Gagal mengambil data ibu & catatan:", error);
-        throw new Error("Terjadi kesalahan saat mengambil data");
     }
-}
 
     async loginIbu(loginData) {
         const emailExistsInIbu = await db.collection("Ibu").where("email_ibu", "==", loginData.email_ibu).get();

@@ -12,8 +12,6 @@ class CatatanRoutes {
         return this.router
             .post("/catatan", authMiddleware, this.catatanController.createNewCatatan)
             .get("/catatan/:idIbu", authMiddleware, this.catatanController.viewAllCatatan)
-            .get("/catatan/:idIbu/summary", authMiddleware, this.catatanController.catatanSummary)
-            // .get("/catatan/:idIbu", authMiddleware, this.catatanController.viewAllCatatan)
             .get("/histori/catatan/baca", authMiddleware, this.catatanController.bacaCatatan);
     }
 }
